@@ -16,6 +16,10 @@ export const getGroups = async () => {
   const res = await apiCommon.get("https://localhost:7152/api/Message/groubs");
   return res;
 };
+export const getGroupsUser = async () => {
+  const res = await apiCommon.get("https://localhost:7152/api/Message/groupsUser");
+  return res;
+};
 export const getMassegesGroups = async (groupId) => {
  const res = await apiCommon.get(`https://localhost:7152/api/message/group/${groupId}`, {
       });

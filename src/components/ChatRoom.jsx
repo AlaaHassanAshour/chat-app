@@ -4,15 +4,15 @@ import { HubConnectionBuilder } from "@microsoft/signalr";
 import { jwtDecode } from "jwt-decode";
 import { AUTH_CONFIG } from "../config/env";
 import "./ChatRoom.css"; // سننشئ ملف CSS مخصص
-import { getAllUsers ,getPrivateMessages ,getGroups,getMassegesGroups ,createGroub,sendMessages} from "../services/api"; 
+import { getAllUsers ,getPrivateMessages ,getGroups,getMassegesGroups ,createGroub,sendMessages,getGroupsUser} from "../services/api"; 
 import { Layout,Modal, Menu,Checkbox,Button, List, Input, Typography, Divider } from "antd";
 import { UserOutlined, TeamOutlined, MessageOutlined, PlusOutlined } from "@ant-design/icons";
-
+import connection from "../services/signalR"
 const ChatRoom = () => {
   const { Sider, Content } = Layout;
 const { TextArea } = Input;
 const { Title } = Typography;
-  const [connection, setConnection] = useState(null);
+  const [connections, setConnection] = useState(null);
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
   const [selectedReceiverId, setSelectedReceiverId] = useState(null);
@@ -39,13 +39,15 @@ const joinGroup = async (groupId) => {
     // ✅ جلب رسائل المجموعة
     try {
       const groupMessages = await getMassegesGroups(groupId);
-        const formatted = groupMessages.map((m) => ({
-             senderId: m.senderName,
+      const formatted = groupMessages.map((m) => ({
+             senderName:m.senderName,       
+             senderId: m.senderId,
              content: m.content,
              mine: m.senderId === userId,
              timestamp: m.timestamp,
            }));
       setMessages(formatted);
+      cons
     } catch (error) {
       console.error("❌ فشل في جلب رسائل المجموعة:", error);
     }
@@ -75,18 +77,18 @@ const handleCreateGroup = async () => {
 
 
   useEffect(() => {
-    const conn = new HubConnectionBuilder()
-      .withUrl("https://localhost:7152/chatHub", {
-        accessTokenFactory: () => token,
-      })
-      .withAutomaticReconnect()
-      .build();
+    // const conn = new HubConnectionBuilder()
+    //   .withUrl("https://localhost:7152/chatHub", {
+    //     accessTokenFactory: () => token,
+    //   })
+    //   .withAutomaticReconnect()
+    //   .build();
 
-    conn
+    connection
       .start()
       .then(() => {
         console.log("✅ Connected to SignalR hub");
-        setConnection(conn);
+        setConnection(connection);
       })
       .catch((err) => console.error("SignalR Connection Error: ", err));
 
@@ -114,7 +116,9 @@ const handleCreateGroup = async () => {
 useEffect(() => {
   const fetchGroups = async () => {
     try {
-      const data = await getGroups();
+      
+      // const data = await getGroups();
+      const data = await getGroupsUser();
       setGroups(data);
     } catch (err) {
       console.error("❌ فشل في جلب المجموعات:", err);
@@ -131,8 +135,9 @@ useEffect(() => {
     try {
       const previousMessages = await getPrivateMessages(selectedReceiverId);
       const formatted = previousMessages.map((m) => ({
-        senderId: m.senderName,
-        content: m.content,
+ senderName:m.senderName,       
+             senderId: m.senderId,
+                     content: m.content,
         mine: m.senderId === userId,
         timestamp: m.timestamp,
       }));
@@ -147,7 +152,7 @@ useEffect(() => {
 }, [selectedReceiverId]);
 
   useEffect(() => {
-    if (!connection) return;
+    if (!connections) return;
 
     const receiveMessageHandler = (senderId, content ,timestamp,senderName) => {
       setMessages((prev) => [
@@ -157,16 +162,16 @@ useEffect(() => {
       console.log("📩 Received message:", { senderId, content, timestamp, senderName });
     };
 
-    connection.on("ReceiveMessage", receiveMessageHandler);
-    connection.on("ReceivePrivateMessage", receiveMessageHandler);
-    connection.on("ReceiveGroupMessage", receiveMessageHandler);
+    connections.on("ReceiveMessage", receiveMessageHandler);
+    connections.on("ReceivePrivateMessage", receiveMessageHandler);
+    connections.on("ReceiveGroupMessage", receiveMessageHandler);
 
     return () => {
-      connection.off("ReceiveMessage", receiveMessageHandler);
-      connection.off("ReceivePrivateMessage", receiveMessageHandler);
-      connection.off("ReceiveGroupMessage", receiveMessageHandler);
+      connections.off("ReceiveMessage", receiveMessageHandler);
+      connections.off("ReceivePrivateMessage", receiveMessageHandler);
+      connections.off("ReceiveGroupMessage", receiveMessageHandler);
     };
-  }, [connection, userId]);
+  }, [connections, userId]);
 
   const sendMessage = async () => {
     if (message.trim() === "") return;
@@ -249,7 +254,7 @@ useEffect(() => {
                   }}
                 >
                   <div style={{ fontWeight: "bold", marginBottom: 4 }}>
-                    {msg.mine ? "أنا" : msg.senderId}
+                    {msg.mine ? "أنا" : msg.senderName}
                   </div>
                   <div>{msg.content}</div>
                   <div style={{ fontSize: "0.75rem", textAlign: "right", marginTop: 4 }}>
