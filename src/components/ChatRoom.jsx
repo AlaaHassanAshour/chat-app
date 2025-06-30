@@ -129,6 +129,8 @@ useEffect(() => {
 }, []);
 
 useEffect(() => {
+
+
   const fetchMessages = async () => {
     if (!selectedReceiverId) return;
 
@@ -153,8 +155,7 @@ useEffect(() => {
 
   useEffect(() => {
     if (!connections) return;
-
-    const receiveMessageHandler = (senderId, content ,timestamp,senderName) => {
+    const receiveMessageHandler = (senderId,senderName, content ,timestamp) => {
       setMessages((prev) => [
         ...prev,
         { senderId, senderName,content, mine: senderId === userId ,timestamp},
@@ -175,7 +176,7 @@ useEffect(() => {
 
   const sendMessage = async () => {
     if (message.trim() === "") return;
-
+console.log("Front userId:", userId);
     try {
        await sendMessages(
         message,
