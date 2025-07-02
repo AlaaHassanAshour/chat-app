@@ -1,4 +1,5 @@
-import { useEffect, useState, useRef } from "react";
+// src/components/ChatRoom.jsx
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { HubConnectionBuilder } from "@microsoft/signalr";
 import { jwtDecode } from "jwt-decode";
 
@@ -36,15 +37,44 @@ const { Sider, Content } = Layout;
 const { TextArea } = Input;
 const { Title } = Typography;
 
+/* ------------------------------------------------------------------ */
+/* 🔧 helper */
+const mapMessages = (rows, currentUserId) =>
+  rows.map((m) => ({
+    senderId: m.senderId,
+    senderName: m.senderName,
+    content: m.content,
+    mine: m.senderId === currentUserId,
+    timestamp: m.timestamp,
+  }));
+  /**
+ * Decode JWT once whenever token changes.
+ */
+const useCurrentUserId = (token) =>
+  useMemo(() => {
+    if (!token) return null;
+    const decoded = jwtDecode(token);
+    return decoded.userId || decoded.nameid || decoded.sub;
+  }, [token]);
+
+/**
+ * Map raw message DTO coming from API → UI model.
+ */
+
+
+
 export default function ChatRoom() {
   /* ------------------------------------------------------------------ */
-  /* 🔑 بيانات المستخدم الحالى من التوكن */
-  const token = localStorage.getItem(AUTH_CONFIG.tokenKey || "accessToken");
-  const decoded = token ? jwtDecode(token) : {};
-  const currentUserId = decoded.userId || decoded.nameid || decoded.sub;
+  /* 🆔 user & token */
+    const token = localStorage.getItem(AUTH_CONFIG.tokenKey || "accessToken");
+    const currentUserId = useCurrentUserId(token);
+
+  // const token = localStorage.getItem(AUTH_CONFIG.tokenKey || "accessToken");
+  // const decoded = token ? jwtDecode(token) : {};
+  // const currentUserId = decoded.userId || decoded.nameid || decoded.sub;
 
   /* ------------------------------------------------------------------ */
-  /* 🏷️   State */
+  /* 🏷️ state */
   const [hub, setHub] = useState(null);
 
   const [message, setMessage] = useState("");
@@ -56,16 +86,16 @@ export default function ChatRoom() {
   const [selectedReceiverId, setSelectedReceiverId] = useState(null);
   const [selectedGroupId, setSelectedGroupId] = useState(null);
 
-  /* إنشاء مجموعة */
+  /* new‑group modal */
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [selectedMemberIds, setSelectedMemberIds] = useState([]);
 
-  /* مرجع للتمرير التلقائى لأسفل */
+  /* scroll‑bottom ref */
   const bottomRef = useRef(null);
 
   /* ------------------------------------------------------------------ */
-  /* 🔌 إنشاء اتصال SignalR */
+  /* 🔌 SignalR connection (once) */
   useEffect(() => {
     const connection = new HubConnectionBuilder()
       .withUrl("https://localhost:7152/chatHub", {
@@ -76,21 +106,18 @@ export default function ChatRoom() {
 
     connection
       .start()
-      .then(() => {
-        setHub(connection);
-      })
-      .catch((err) => console.error("SignalR Connection Error:", err));
+      .then(() => setHub(connection))
+      .catch((err) => console.error("SignalR error:", err));
 
     return () => connection.stop();
   }, [token]);
 
   /* ------------------------------------------------------------------ */
-  /* 📥 مستمعو الرسائل */
+  /* 📥 listeners */
   useEffect(() => {
     if (!hub) return;
 
-    const onReceive = (senderId, senderName, content, timestamp) => {
-      // console.log("🔔 تلقَّيت:", { senderId, senderName, content, timestamp });
+    const onReceive = (senderId, senderName, content, timestamp) =>
       setMessages((prev) => [
         ...prev,
         {
@@ -101,7 +128,6 @@ export default function ChatRoom() {
           timestamp,
         },
       ]);
-    };
 
     hub.on("ReceivePrivateMessage", onReceive);
     hub.on("ReceiveGroupMessage", onReceive);
@@ -114,75 +140,85 @@ export default function ChatRoom() {
     };
   }, [hub, currentUserId]);
 
-  /* ------------------------------------------------------------------ */
-  /* ⬇️ تمرير آلى لآخر رسالة */
+  /* auto‑scroll */
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   /* ------------------------------------------------------------------ */
-  /* 📡 جلب المستخدمين والمجموعات مرة واحدة */
+  /* 🔖 memoized menu items */
+  const userMenuItems = useMemo(
+    () =>
+      users
+        .filter((u) => u.id !== currentUserId)
+        .map((u) => ({
+          key: u.id.toString(),
+          icon: <UserOutlined />,
+          label: u.email,
+        })),
+    [users, currentUserId]
+  );
+
+  const groupMenuItems = useMemo(
+    () =>
+      groups.map((g) => ({
+        key: g.id.toString(),
+        icon: <TeamOutlined />,
+        label: g.name,
+      })),
+    [groups]
+  );
+
+  /* ------------------------------------------------------------------ */
+  /* 📡 initial data */
   useEffect(() => {
     (async () => {
       try {
         setUsers(await getAllUsers());
         setGroups(await getGroupsUser());
       } catch (e) {
-        console.error("فشل تحميل البيانات:", e);
+        console.error("load error:", e);
       }
     })();
   }, []);
 
   /* ------------------------------------------------------------------ */
-  /* 📡 جلب رسائل المستخدم المختار */
+  /* 📡 load direct‑chat messages */
   useEffect(() => {
     if (!selectedReceiverId) return;
-
     (async () => {
       try {
         const data = await getPrivateMessages(selectedReceiverId);
-        setMessages(
-          data.map((m) => ({
-            senderId: m.senderId,
-            senderName: m.senderName,
-            content: m.content,
-            mine: m.senderId === currentUserId,
-            timestamp: m.timestamp,
-          }))
-        );
+        setMessages(mapMessages(data, currentUserId));
       } catch (e) {
-        console.error("فشل جلب رسائل خاصة:", e);
+        console.error("direct msgs error:", e);
       }
     })();
   }, [selectedReceiverId, currentUserId]);
 
   /* ------------------------------------------------------------------ */
-  /* 📡 دخول مجموعة + جلب رسائلها */
-  const joinGroup = async (groupId) => {
-    if (!hub) return;
+  /* 📡 join group + load history */
+  const joinGroup = useCallback(
+    async (groupId) => {
+      if (!hub) return;
+      await hub.invoke("JoinGroup", groupId.toString());
 
-    await hub.invoke("JoinGroup", groupId.toString());
-    setSelectedGroupId(groupId);
-    setSelectedReceiverId(null);
-    try {
-      const data = await getMassegesGroups(groupId);
-      setMessages(
-        data.map((m) => ({
-          senderId: m.senderId,
-          senderName: m.senderName,
-          content: m.content,
-          mine: m.senderId === currentUserId,
-          timestamp: m.timestamp,
-        }))
-      );
-    } catch (e) {
-      console.error("فشل جلب رسائل المجموعة:", e);
-    }
-  };
+      setSelectedGroupId(groupId);
+      setSelectedReceiverId(null);
+
+      try {
+        const rows = await getMassegesGroups(groupId);
+        setMessages(mapMessages(rows, currentUserId));
+      } catch (e) {
+        console.error("group msgs error:", e);
+      }
+    },
+    [hub, currentUserId]
+  );
 
   /* ------------------------------------------------------------------ */
-  /* 📨 إرسال رسالة */
-  const sendMessage = async () => {
+  /* 📨 send */
+  const sendMessage = useCallback(async () => {
     if (!message.trim()) return;
     try {
       await sendMessages(
@@ -192,32 +228,31 @@ export default function ChatRoom() {
       );
       setMessage("");
     } catch (e) {
-      console.error("فشل الإرسال:", e);
+      console.error("send error:", e);
     }
-  };
+  }, [message, selectedGroupId, selectedReceiverId]);
 
   /* ------------------------------------------------------------------ */
-  /* ➕ إنشاء مجموعة جديدة */
-  const handleCreateGroup = async () => {
+  /* ➕ create group */
+  const handleCreateGroup = useCallback(async () => {
     if (!newGroupName.trim() || selectedMemberIds.length === 0) return;
-
     try {
-      const group = await createGroub(newGroupName, selectedMemberIds);
-      setGroups((prev) => [...prev, group]);
+      const g = await createGroub(newGroupName, selectedMemberIds);
+      setGroups((prev) => [...prev, g]);
       setShowCreateGroup(false);
       setNewGroupName("");
       setSelectedMemberIds([]);
     } catch (e) {
-      console.error("خطأ إنشاء المجموعة:", e);
+      console.error("create group error:", e);
     }
-  };
+  }, [newGroupName, selectedMemberIds]);
 
-  /* ================================================================== */
-  /* UI =============================================================== */
+  /* =================================================================== */
+  /* UI */
   return (
     <>
       <Layout style={{ height: "100vh" }}>
-        {/* ======= الشريط الجانبى ======= */}
+        {/* ========== Sidebar ========== */}
         <Sider width={260} style={{ background: "#fff", padding: 16 }}>
           <Title level={4}>📁 المجموعات</Title>
 
@@ -231,40 +266,28 @@ export default function ChatRoom() {
             إنشاء مجموعة
           </Button>
 
-          {/* قائمة المجموعات */}
           <Menu
             mode="inline"
             selectedKeys={[selectedGroupId?.toString()]}
+            items={groupMenuItems}
             onClick={({ key }) => joinGroup(key)}
-            items={groups.map((g) => ({
-              key: g.id.toString(),
-              icon: <TeamOutlined />,
-              label: g.name,
-            }))}
           />
 
           <Divider />
 
           <Title level={4}>👥 المستخدمين</Title>
-          {/* قائمة المستخدمين */}
           <Menu
             mode="inline"
             selectedKeys={[selectedReceiverId?.toString()]}
+            items={userMenuItems}
             onClick={({ key }) => {
               setSelectedReceiverId(key);
               setSelectedGroupId(null);
             }}
-            items={users
-              .filter((u) => u.id !== currentUserId)
-              .map((u) => ({
-                key: u.id.toString(),
-                icon: <UserOutlined />,
-                label: u.email,
-              }))}
           />
         </Sider>
 
-        {/* ======= مساحة الدردشة ======= */}
+        {/* ========== Chat Area ========== */}
         <Layout>
           <Content
             style={{
@@ -274,7 +297,7 @@ export default function ChatRoom() {
               height: "100%",
             }}
           >
-            {/* قائمة الرسائل */}
+            {/* messages list */}
             <div
               style={{
                 flex: 1,
@@ -288,24 +311,17 @@ export default function ChatRoom() {
                 dataSource={messages}
                 renderItem={(msg) => {
                   const isMe = msg.mine;
-                  const bubbleStyle = {
+                  const bubble = {
                     maxWidth: "70%",
                     padding: "10px 14px",
                     borderRadius: 18,
-                    lineHeight: 1.5,
                     background: isMe ? "#DCF8C6" : "#FFF",
                     boxShadow: "0 0 4px rgba(0,0,0,0.05)",
                   };
-
-                  let timeStr = "";
-                  try {
-                    timeStr = new Date(msg.timestamp).toLocaleString("ar-EG", {
-                      dateStyle: "short",
-                      timeStyle: "short",
-                    });
-                  } catch {
-                    timeStr = msg.timestamp;
-                  }
+                  const time = new Date(msg.timestamp).toLocaleString("ar-EG", {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  });
 
                   return (
                     <List.Item
@@ -314,11 +330,9 @@ export default function ChatRoom() {
                         justifyContent: isMe ? "flex-end" : "flex-start",
                       }}
                     >
-                      <div style={bubbleStyle}>
-                        <div
-                          style={{ fontWeight: 600, marginBottom: 4 }}
-                        >
-                          {isMe ? ` انا ${msg.senderName}` : msg.senderName ?? msg.senderId}
+                      <div style={bubble}>
+                        <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                          {isMe ? `أنا (${msg.senderName})` : msg.senderName}
                         </div>
                         <div>{msg.content}</div>
                         <div
@@ -329,7 +343,7 @@ export default function ChatRoom() {
                             marginTop: 6,
                           }}
                         >
-                          {timeStr}
+                          {time}
                         </div>
                       </div>
                     </List.Item>
@@ -339,7 +353,7 @@ export default function ChatRoom() {
               <div ref={bottomRef} />
             </div>
 
-            {/* مربع الكتابة */}
+            {/* composer */}
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
               <TextArea
                 rows={1}
@@ -364,14 +378,14 @@ export default function ChatRoom() {
         </Layout>
       </Layout>
 
-      {/* نافذة إنشاء مجموعة */}
+      {/* ========== Create Group Modal ========== */}
       <Modal
         title="إنشاء مجموعة جديدة"
         open={showCreateGroup}
-        onCancel={() => setShowCreateGroup(false)}
-        onOk={handleCreateGroup}
         okText="إنشاء"
         cancelText="إلغاء"
+        onCancel={() => setShowCreateGroup(false)}
+        onOk={handleCreateGroup}
       >
         <Input
           placeholder="اسم المجموعة"
@@ -390,7 +404,7 @@ export default function ChatRoom() {
               overflowY: "auto",
             }}
             value={selectedMemberIds}
-            onChange={(ids) => setSelectedMemberIds(ids)}
+            onChange={setSelectedMemberIds}
           >
             {users
               .filter((u) => u.id !== currentUserId)
