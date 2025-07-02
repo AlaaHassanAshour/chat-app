@@ -318,7 +318,7 @@ export default function ChatRoom() {
                         <div
                           style={{ fontWeight: 600, marginBottom: 4 }}
                         >
-                          {isMe ? "أنا" : msg.senderName ?? msg.senderId}
+                          {isMe ? ` انا ${msg.senderName}` : msg.senderName ?? msg.senderId}
                         </div>
                         <div>{msg.content}</div>
                         <div
